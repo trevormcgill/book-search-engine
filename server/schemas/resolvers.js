@@ -1,79 +1,59 @@
 const { AuthenticationError } = require('apollo-server-express');
 const { User } = require('../models');
-const { signToken } = require('../utils/auth');
-const mongoose = require('mongoose')
+const { signToken } = require('../utils/auth')
 
 const resolvers = {
     Query: {
-        getUserById: async (_, { id }) => {
-            const foundUser = await User.findById(id);
-            if (!foundUser) {
-                throw new Error("User not found!");
-            }
-            return foundUser;
+        me: async (parent, { _id }, context) => {
+            return User.findOne({ _id: context.user._id }).populate('savedBooks');
         },
-
-        getUserByUsername: async (_, { username }) => {
-            const foundUser = await User.findOne({ username });
-            if (!foundUser) {
-                throw new Error("User not found!");
-            }
-            return foundUser;
-        },
+        allUsers: async () => {
+            return User.find().populate('savedBooks');
+        }
     },
+
     Mutation: {
-        createUser: async (_, { userInput }) => {
-            const newUser = await User.create(userInput);
-            if (!newUser) {
-                throw new Error("Error creating the user!");
-            }
-            const token = signToken(newUser);
-            return { token, user: newUser };
-        },
-        login: async (_, { loginInput }) => {
-            const { username, email, password } = loginInput;
-            const user = await User.findOne({ $or: [{ username }, { email }] });
+        login: async (parent, { email, password }) => {
+            const user = await User.findOne({ email });
+
             if (!user) {
-                throw new Error("User not found!");
+                throw new AuthenticationError('No user found with that email address!')
             }
 
-            const correctPw = await user.isCorrectPassword(password);
+            const correctPw = await user.isCorrectPassword(password)
+
             if (!correctPw) {
-                throw new Error("Invalid password!");
+                throw new AuthenticationError('Incorrect password!');
             }
 
             const token = signToken(user);
+
             return { token, user };
         },
-        saveBook: async (_, { bookInput }, { user }) => {
-            if (!user) {
-                throw new Error("Authentication required!");
-            }
-
-            const updatedUser = await User.findOneAndUpdate(
-                { _id: user._id },
-                { $addToSet: { savedBooks: bookInput } },
-                { new: true, runValidators: true }
-            );
-
-            return updatedUser;
+        addUser: async (parent, { username, email, password }) => {
+            const user = await User.create({ username, email, password });
+            const token = signToken(user);
+            return { token, user }
         },
-        removeBook: async (_, { bookId }, { user }) => {
-            if (!user) {
-                throw new Error("Authentication required!");
-            }
-
+        saveBook: async (parent, { BookInput }, context) => {
+            if (context.user) {
+                const updatedUser = await User.findOneAndUpdate(
+                    { _id: context.user._id },
+                    { $addToSet: { savedBooks: BookInput }},
+                    { new: true, runValidators: true }, 
+                );
+                return updatedUser;
+            } 
+        },
+        removeBook: async (parent, { bookId }, context) => {
             const updatedUser = await User.findOneAndUpdate(
-                { _id: user._id },
-                { $pull: { savedBooks: { bookId } } },
+                { _id: context.user._id},
+                { $pull: { savedBooks: { bookId: bookId }}},
                 { new: true }
             );
-
-            if (!updatedUser) {
-                throw new Error("User not found!");
-            }
-
             return updatedUser;
-        },
+        }
     }
 }
+
+module.exports = resolvers
